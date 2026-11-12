@@ -4,9 +4,3 @@
 
 [functions]
   node_bundler = "esbuild"
-
-# Only this site and ZT-ERP LITE (Sales > Mould estimator) may show the estimator inside a frame.
-[[headers]]
-  for = "/*"
-  [headers.values]
-    Content-Security-Policy = "frame-ancestors 'self' https://zoom-po-approval.netlify.app https://develop--zoom-po-approval.netlify.app"

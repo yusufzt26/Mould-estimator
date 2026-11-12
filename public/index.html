@@ -568,17 +568,8 @@ function partPrices(job,qt){qt=qt||quoteJob(job);const M=jobM(job),HR=Object.ass
 /* rates are frozen when the job is marked quoted, so later rate changes don't move a quote */
 function jobM(job){return (job.masterSnap&&['quoted','won','lost'].includes(job.status))?Object.assign(defaultMaster(),job.masterSnap):S.master}
 function jobCost(job){return costJob(job,jobM(job))}
-/* summary read by ZT-ERP LITE (Sales > Mould estimator, Reports > Job costing). Saved with the job; the ERP only reads it. Keep field names stable. */
-function erpSummary(job){
-  const M=jobM(job),qt=quoteJob(job,M),b=qt.b,R=x=>Math.round(num(x)),parts=(job.parts||[]).filter(p=>num(p.qty)>0);
-  const qv=x=>x&&x.q&&typeof x.q==='object'?num(x.q.v):null;
-  const hours=[...b.design,...b.process].filter(x=>x.u==='hr'&&qv(x)>0).map(x=>({label:x.label,hrs:+qv(x).toFixed(1),amt:R(x.v)}));
-  const raw=parts.filter(p=>p.cat!=='bo').map(p=>{const c=calcPart(p,M),q=num(p.qty);return {name:p.name||'',type:p.cat==='pl'?'Plate':'Round',qty:q,grade:p.mat||'',finish:psize(p),raw:String(c.raw||'').replace(/×/g,'x'),kg:+(c.wt*q).toFixed(2),rate:num(matOf(M,p.mat).rate),amt:R(c.mat*q),ht:p.ht&&p.ht!=='None'?p.ht:''}});
-  const bo=parts.filter(p=>p.cat==='bo').map(p=>({name:p.name||'',spec:p.spec||'',make:p.make||'',qty:num(p.qty),rate:num(p.rate),amt:R(calcPart(p,M).tot)}));
-  return {v:1,at:Date.now(),cls:qt.cls,size:mouldSize(job),toolKg:+num(b.toolWt).toFixed(1),
-    cost:{material:R(b.A),other:R(b.B),design:R(b.C),process:R(b.D),others:R(b.E),total:R(b.total)},
-    profitPct:num(qt.pct),profit:R(qt.profit),discount:R(qt.disc),price:R(qt.net),gstPct:num(qt.gstPct),gst:R(qt.gst),grand:R(qt.total),hours,raw,bo};
-}
+/* the only figures ZT-ERP LITE may fetch (its Fetch estimate button). Saved with the job; keep the field names stable. */
+function erpSummary(job){const qt=quoteJob(job,jobM(job));return {v:1,at:Date.now(),price:Math.round(num(qt.net)),gstPct:num(qt.gstPct)}}
 function mouldSize(job){const m=job.size||{};return (m.L&&m.W)?`${m.L} × ${m.W}${m.H?' × '+m.H:''}`:'–'}
 
 /* ---------- parts from a quick standard mould base ---------- */
@@ -1006,7 +997,7 @@ function render(){
   try{
   if(S.view==='job'&&curJob())html=renderJob(curJob());
   else if(S.view==='rates')html=renderRates();
-  else if(S.view==='newcat')html=`<div><button class="back" type="button" data-act="home">← Enquiries</button></div><section class="listhead"><div><span class="eyebrow">New enquiry</span><h2>What are we estimating?</h2>${ERPNEW?`<p><b>From ZT-ERP LITE:</b> ${esc([ERPNEW.customer,ERPNEW.part,ERPNEW.ref,ERPNEW.job&&"Job "+ERPNEW.job].filter(Boolean).join(" · "))}</p>`:""}<p>The category sets the starting hours for design, EDM and polishing, whether assembly is added, and whether the quote is one set price or a price per part. You can change it later in step 1.</p></div></section><div class="catgrid">${CATS.map(([k,l,d])=>`<button type="button" class="catcard" data-newcat="${k}"><b>${l}</b><span>${d}</span></button>`).join('')}</div>`;
+  else if(S.view==='newcat')html=`<div><button class="back" type="button" data-act="home">← Enquiries</button></div><section class="listhead"><div><span class="eyebrow">New enquiry</span><h2>What are we estimating?</h2><p>The category sets the starting hours for design, EDM and polishing, whether assembly is added, and whether the quote is one set price or a price per part. You can change it later in step 1.</p></div></section><div class="catgrid">${CATS.map(([k,l,d])=>`<button type="button" class="catcard" data-newcat="${k}"><b>${l}</b><span>${d}</span></button>`).join('')}</div>`;
   else{S.view='list';html=renderList()}
   }catch(err){console.error(err);const msg=String(err&&err.message||err),at=String(err&&err.stack||'').split('\n').slice(1,3).join(' ').trim();
     html=`<div class="banner bad" role="alert"><b>Something went wrong showing this page.</b> Please send this message to the app builder: ${esc(msg)} ${esc(at)}</div><div><button class="back" type="button" data-act="home">← Enquiries</button></div>`}
@@ -1483,7 +1474,7 @@ document.addEventListener('click',e=>{
   if(t.dataset.add){const j=curJob();j.parts.push(t.dataset.add==='pl'?{id:uid(),cat:'pl',name:'New plate',qty:1,mat:'1.1730 (C45W)',L:300,W:300,T:30,holes:6,gun:0,ht:'None',other:0}:{id:uid(),cat:'rd',name:'New round part',qty:1,mat:'EN31',D:20,L:100,ht:'None',other:0});touch(j);render();return}
   if((t.dataset.addm||t.dataset.delm)&&!can('master')){toast('Your role cannot edit the masters.');return}
   if(t.dataset.uadd){const id=t.dataset.uadd;S.access.users=S.access.users||{};if(!S.access.users[id])S.access.users[id]={role:S.access.def||'sales'};S.people=S.people||new Set();S.people.add(id);S.uHits=[];touchAccess();render();return}
-  if(t.dataset.newcat){if(!can('edit'))return;const nj=newJob();nj.cat=t.dataset.newcat;if(ERPNEW){nj.customer=ERPNEW.customer;nj.part=ERPNEW.part;nj.erpRef=ERPNEW.ref;nj.erpJob=ERPNEW.job;ERPNEW=null}if(isParts(nj))nj.kind='parts';S.jobs.set(nj.id,nj);touch(nj);flush(nj.id);S.jobId=nj.id;S.view='job';S.step=1;render();window.scrollTo(0,0);return}
+  if(t.dataset.newcat){if(!can('edit'))return;const nj=newJob();nj.cat=t.dataset.newcat;if(isParts(nj))nj.kind='parts';S.jobs.set(nj.id,nj);touch(nj);flush(nj.id);S.jobId=nj.id;S.view='job';S.step=1;render();window.scrollTo(0,0);return}
   if(t.dataset.addm){const k=t.dataset.addm,id=uid();S.master[k]=S.master[k]||[];S.master[k].push(k==='materials'?{id,name:'New grade',density:7.85,rate:0}:k==='ht'?{id,name:'New treatment',rate:0}:k==='customers'?{id,name:'New customer',contact:'',city:'',km:'',cls:'C'}:{id,name:'New item',spec:'',make:'',rate:0});touchMaster();render();return}
   if(t.dataset.delm){const [k,id]=t.dataset.delm.split('|');S.master[k]=S.master[k].filter(x=>x.id!==id);touchMaster();render();return}
   const a=t.dataset.act;if(!a)return;const j=curJob();
@@ -1657,9 +1648,6 @@ function startLocal(){
   const js=lsGet('me.jobs',null);if(js&&js.length)js.forEach(j=>S.jobs.set(j.id,j));else{const ex=exampleJob();S.jobs.set(ex.id,ex)}
   render();
 }
-/* opened from ZT-ERP LITE with ?erp=new&customer=&part=&ref=&job= : go straight to a new enquiry with those filled in */
-let ERPNEW=(()=>{try{const q=new URLSearchParams(location.search);if(q.get('erp')!=='new')return null;const g=k=>String(q.get(k)||'').slice(0,120);history.replaceState(null,'',location.pathname);return {customer:g('customer'),part:g('part'),ref:g('ref'),job:g('job')}}catch(e){return null}})();
-if(ERPNEW)S.view='newcat';
 {const t=lsGet('me.theme','');if(t)document.documentElement.setAttribute('data-theme',t);const sl=document.getElementById('themeSel');if(sl)sl.value=t}
 startLocal();
 (async()=>{
@@ -1676,7 +1664,7 @@ startLocal();
       const local=S.jobs.get(id),inc=JSON.parse(JSON.stringify(ch.doc.data()));if(local&&(local.updatedAt||0)>(inc.updatedAt||0))continue;
       S.jobs.set(id,Object.assign({id},inc))}
     if(first){first=false;if(S.view==='job'&&!S.jobs.has(S.jobId))S.view='list';
-      /* once: give older jobs the ERP summary, so ZT-ERP LITE can show their figures */
+      /* once: give older jobs the price summary the ERP fetches */
       if(can('edit')||can('quote'))setTimeout(()=>{for(const j of S.jobs.values())if(!j.example&&!(j.erp&&j.erp.v===1))flush(j.id)},3000)}
     const a=document.activeElement;if(a&&a.dataset&&a.dataset.b&&S.view==='job')return;render();
   },err=>toast('Lost connection to shared jobs. Changes stay on screen.'));
