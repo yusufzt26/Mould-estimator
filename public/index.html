@@ -568,6 +568,8 @@ function partPrices(job,qt){qt=qt||quoteJob(job);const M=jobM(job),HR=Object.ass
 /* rates are frozen when the job is marked quoted, so later rate changes don't move a quote */
 function jobM(job){return (job.masterSnap&&['quoted','won','lost'].includes(job.status))?Object.assign(defaultMaster(),job.masterSnap):S.master}
 function jobCost(job){return costJob(job,jobM(job))}
+/* the only figures ZT-ERP LITE may fetch (its Fetch estimate button). Saved with the job; keep the field names stable. */
+function erpSummary(job){const qt=quoteJob(job,jobM(job));return {v:1,at:Date.now(),price:Math.round(num(qt.net)),gstPct:num(qt.gstPct)}}
 function mouldSize(job){const m=job.size||{};return (m.L&&m.W)?`${m.L} × ${m.W}${m.H?' × '+m.H:''}`:'–'}
 
 /* ---------- parts from a quick standard mould base ---------- */
@@ -610,6 +612,7 @@ function touch(job){job.updatedAt=Date.now();job.updatedBy=meId;S.jobs.set(job.i
 function queueSave(id){clearTimeout(saveTimers[id]);saveTimers[id]=setTimeout(()=>flush(id),500)}
 async function flush(id){
   const job=S.jobs.get(id);if(!job)return;
+  try{job.erp=erpSummary(job)}catch(e){}
   if(S.mode==='local'){lsSet('me.jobs',[...S.jobs.values()]);return}
   if(writing[id]){pending[id]=true;return}
   writing[id]=true;
@@ -1660,7 +1663,9 @@ startLocal();
       if(writing[id]||pending[id])continue;
       const local=S.jobs.get(id),inc=JSON.parse(JSON.stringify(ch.doc.data()));if(local&&(local.updatedAt||0)>(inc.updatedAt||0))continue;
       S.jobs.set(id,Object.assign({id},inc))}
-    if(first){first=false;if(S.view==='job'&&!S.jobs.has(S.jobId))S.view='list'}
+    if(first){first=false;if(S.view==='job'&&!S.jobs.has(S.jobId))S.view='list';
+      /* once: give older jobs the price summary the ERP fetches */
+      if(can('edit')||can('quote'))setTimeout(()=>{for(const j of S.jobs.values())if(!j.example&&!(j.erp&&j.erp.v===1))flush(j.id)},3000)}
     const a=document.activeElement;if(a&&a.dataset&&a.dataset.b&&S.view==='job')return;render();
   },err=>toast('Lost connection to shared jobs. Changes stay on screen.'));
   S.access={def:'sales',users:{}};S.people=new Set();
