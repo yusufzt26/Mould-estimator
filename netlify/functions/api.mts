@@ -100,7 +100,7 @@ export default async (req: Request, context: Context) => {
     const all = await Promise.all(blobs.map(async b => ({ key: b.key.slice(5), j: await docs().get(b.key, { type: "json" }) as any })));
     const jobs = all.filter(x => x.j && !x.j.example).map(({ key, j }) => ({
       id: key, no: j.no || "", customer: j.customer || "", part: j.part || "", mouldNo: j.mouldNo || "", status: j.status || "draft",
-      date: j.date || "", updatedAt: j.updatedAt || 0, erp: j.erp && j.erp.v === 1 ? j.erp : null,
+      date: j.date || "", updatedAt: j.updatedAt || 0, erpRef: j.erpRef || "", erpJob: j.erpJob || "", erp: j.erp && j.erp.v === 1 ? j.erp : null,
     }));
     return json({ jobs, at: Date.now() });
   }

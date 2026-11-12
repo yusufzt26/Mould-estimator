@@ -1006,7 +1006,7 @@ function render(){
   try{
   if(S.view==='job'&&curJob())html=renderJob(curJob());
   else if(S.view==='rates')html=renderRates();
-  else if(S.view==='newcat')html=`<div><button class="back" type="button" data-act="home">← Enquiries</button></div><section class="listhead"><div><span class="eyebrow">New enquiry</span><h2>What are we estimating?</h2><p>The category sets the starting hours for design, EDM and polishing, whether assembly is added, and whether the quote is one set price or a price per part. You can change it later in step 1.</p></div></section><div class="catgrid">${CATS.map(([k,l,d])=>`<button type="button" class="catcard" data-newcat="${k}"><b>${l}</b><span>${d}</span></button>`).join('')}</div>`;
+  else if(S.view==='newcat')html=`<div><button class="back" type="button" data-act="home">← Enquiries</button></div><section class="listhead"><div><span class="eyebrow">New enquiry</span><h2>What are we estimating?</h2>${ERPNEW?`<p><b>From ZT-ERP LITE:</b> ${esc([ERPNEW.customer,ERPNEW.part,ERPNEW.ref,ERPNEW.job&&"Job "+ERPNEW.job].filter(Boolean).join(" · "))}</p>`:""}<p>The category sets the starting hours for design, EDM and polishing, whether assembly is added, and whether the quote is one set price or a price per part. You can change it later in step 1.</p></div></section><div class="catgrid">${CATS.map(([k,l,d])=>`<button type="button" class="catcard" data-newcat="${k}"><b>${l}</b><span>${d}</span></button>`).join('')}</div>`;
   else{S.view='list';html=renderList()}
   }catch(err){console.error(err);const msg=String(err&&err.message||err),at=String(err&&err.stack||'').split('\n').slice(1,3).join(' ').trim();
     html=`<div class="banner bad" role="alert"><b>Something went wrong showing this page.</b> Please send this message to the app builder: ${esc(msg)} ${esc(at)}</div><div><button class="back" type="button" data-act="home">← Enquiries</button></div>`}
@@ -1483,7 +1483,7 @@ document.addEventListener('click',e=>{
   if(t.dataset.add){const j=curJob();j.parts.push(t.dataset.add==='pl'?{id:uid(),cat:'pl',name:'New plate',qty:1,mat:'1.1730 (C45W)',L:300,W:300,T:30,holes:6,gun:0,ht:'None',other:0}:{id:uid(),cat:'rd',name:'New round part',qty:1,mat:'EN31',D:20,L:100,ht:'None',other:0});touch(j);render();return}
   if((t.dataset.addm||t.dataset.delm)&&!can('master')){toast('Your role cannot edit the masters.');return}
   if(t.dataset.uadd){const id=t.dataset.uadd;S.access.users=S.access.users||{};if(!S.access.users[id])S.access.users[id]={role:S.access.def||'sales'};S.people=S.people||new Set();S.people.add(id);S.uHits=[];touchAccess();render();return}
-  if(t.dataset.newcat){if(!can('edit'))return;const nj=newJob();nj.cat=t.dataset.newcat;if(isParts(nj))nj.kind='parts';S.jobs.set(nj.id,nj);touch(nj);flush(nj.id);S.jobId=nj.id;S.view='job';S.step=1;render();window.scrollTo(0,0);return}
+  if(t.dataset.newcat){if(!can('edit'))return;const nj=newJob();nj.cat=t.dataset.newcat;if(ERPNEW){nj.customer=ERPNEW.customer;nj.part=ERPNEW.part;nj.erpRef=ERPNEW.ref;nj.erpJob=ERPNEW.job;ERPNEW=null}if(isParts(nj))nj.kind='parts';S.jobs.set(nj.id,nj);touch(nj);flush(nj.id);S.jobId=nj.id;S.view='job';S.step=1;render();window.scrollTo(0,0);return}
   if(t.dataset.addm){const k=t.dataset.addm,id=uid();S.master[k]=S.master[k]||[];S.master[k].push(k==='materials'?{id,name:'New grade',density:7.85,rate:0}:k==='ht'?{id,name:'New treatment',rate:0}:k==='customers'?{id,name:'New customer',contact:'',city:'',km:'',cls:'C'}:{id,name:'New item',spec:'',make:'',rate:0});touchMaster();render();return}
   if(t.dataset.delm){const [k,id]=t.dataset.delm.split('|');S.master[k]=S.master[k].filter(x=>x.id!==id);touchMaster();render();return}
   const a=t.dataset.act;if(!a)return;const j=curJob();
@@ -1657,6 +1657,9 @@ function startLocal(){
   const js=lsGet('me.jobs',null);if(js&&js.length)js.forEach(j=>S.jobs.set(j.id,j));else{const ex=exampleJob();S.jobs.set(ex.id,ex)}
   render();
 }
+/* opened from ZT-ERP LITE with ?erp=new&customer=&part=&ref=&job= : go straight to a new enquiry with those filled in */
+let ERPNEW=(()=>{try{const q=new URLSearchParams(location.search);if(q.get('erp')!=='new')return null;const g=k=>String(q.get(k)||'').slice(0,120);history.replaceState(null,'',location.pathname);return {customer:g('customer'),part:g('part'),ref:g('ref'),job:g('job')}}catch(e){return null}})();
+if(ERPNEW)S.view='newcat';
 {const t=lsGet('me.theme','');if(t)document.documentElement.setAttribute('data-theme',t);const sl=document.getElementById('themeSel');if(sl)sl.value=t}
 startLocal();
 (async()=>{
