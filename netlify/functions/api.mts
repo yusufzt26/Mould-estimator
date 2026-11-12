@@ -89,6 +89,22 @@ export default async (req: Request, context: Context) => {
     return json({ token: await sign(u), user: { id: u.id, email, name: u.name } });
   }
 
+  if (route === "erp-feed") {
+    // read-only list of estimates for ZT-ERP LITE; its server sends the shared key from the ERP_LINK_KEY env var
+    const want = process.env.ERP_LINK_KEY || "";
+    if (want.length < 16) return json({ error: "ERP link is not set up on this site (ERP_LINK_KEY)." }, 501);
+    const got = req.headers.get("x-link-key") || "";
+    const h = (s: string) => createHmac("sha256", "erp-feed").update(s).digest();
+    if (!timingSafeEqual(h(got), h(want))) return json({ error: "Wrong link key." }, 401);
+    const { blobs } = await docs().list({ prefix: "jobs/" });
+    const all = await Promise.all(blobs.map(async b => ({ key: b.key.slice(5), j: await docs().get(b.key, { type: "json" }) as any })));
+    const jobs = all.filter(x => x.j && !x.j.example).map(({ key, j }) => ({
+      id: key, no: j.no || "", customer: j.customer || "", part: j.part || "", mouldNo: j.mouldNo || "", status: j.status || "draft",
+      date: j.date || "", updatedAt: j.updatedAt || 0, erp: j.erp && j.erp.v === 1 ? j.erp : null,
+    }));
+    return json({ jobs, at: Date.now() });
+  }
+
   const me = await who(req);
   if (!me) return json({ error: "Please sign in again." }, 401);
 
