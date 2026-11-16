@@ -89,6 +89,22 @@ export default async (req: Request, context: Context) => {
     return json({ token: await sign(u), user: { id: u.id, email, name: u.name } });
   }
 
+  if (route === "erp-feed") {
+    // read-only list for ZT-ERP LITE (Fetch estimate). Only these fields leave the estimator. Its server sends ERP_LINK_KEY.
+    const want = process.env.ERP_LINK_KEY || "";
+    if (want.length < 16) return json({ error: "ERP link is not set up on this site (ERP_LINK_KEY)." }, 501);
+    const h = (x: string) => createHmac("sha256", "erp-feed").update(x).digest();
+    if (!timingSafeEqual(h(req.headers.get("x-link-key") || ""), h(want))) return json({ error: "Wrong link key." }, 401);
+    const { blobs } = await docs().list({ prefix: "jobs/" });
+    const all = await Promise.all(blobs.map(async b => ({ id: b.key.slice(5), j: await docs().get(b.key, { type: "json" }) as any })));
+    const estimates = all.filter(x => x.j && !x.j.example).map(({ id, j }) => {
+      const e = j.erp && j.erp.v === 1 ? j.erp : null;
+      return { id, no: j.no || "", customer: j.customer || "", part: j.part || "", mouldNo: j.mouldNo || "", status: j.status || "draft", date: j.date || "",
+        updatedAt: j.updatedAt || 0, price: e ? e.price : null, gstPct: e ? e.gstPct : null };
+    });
+    return json({ estimates, at: Date.now() });
+  }
+
   const me = await who(req);
   if (!me) return json({ error: "Please sign in again." }, 401);
 
