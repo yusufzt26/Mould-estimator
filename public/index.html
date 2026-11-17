@@ -278,6 +278,7 @@ td input.ovr{background:var(--sales-soft);color:var(--sales);-webkit-text-fill-c
 .fzrule{font-size:13px;color:var(--muted);padding:10px 16px;border-top:1px solid var(--line)}
 i.cat.nfc{background:var(--bad)}
 td.xsel{background:var(--sales-soft)!important;box-shadow:inset 0 0 0 1px var(--sales)}td.xsel input,td.xsel select{background:transparent}
+input.xsel,select.xsel,textarea.xsel{background:var(--sales-soft)!important;box-shadow:inset 0 0 0 1px var(--sales)}
 .xlhint{border-bottom:1px dotted var(--muted);cursor:help}
 .nmw{display:flex;align-items:center;gap:8px}.nmw input{flex:1;min-width:0}
 .thumb{flex:none;width:64px;height:48px;border:1px solid var(--line);border-radius:4px;background:#fff;display:grid;place-items:center;overflow:hidden;cursor:zoom-in}
@@ -608,7 +609,27 @@ function exampleJob(){
 }
 function curJob(){return S.jobs.get(S.jobId)}
 const saveTimers={},writing={},pending={};
-function touch(job){job.updatedAt=Date.now();job.updatedBy=meId;S.jobs.set(job.id,job);queueSave(job.id)}
+function touch(job){undoRec(job.id,job);job.updatedAt=Date.now();job.updatedBy=meId;S.jobs.set(job.id,job);queueSave(job.id)}
+/* ---------- undo / redo (Ctrl+Z, Ctrl+Y): a copy of the job or rate master before each change; quick typing in one box is one step ---------- */
+const UNDO={snap:new Map(),u:[],r:[],at:0,el:null,quiet:false};
+function undoSnap(o){const x=JSON.parse(JSON.stringify(o));delete x.updatedAt;delete x.updatedBy;delete x.erp;return JSON.stringify(x)}
+function undoObj(k){return k==='master'?S.master:S.jobs.get(k)}
+function undoBase(k){const o=undoObj(k);if(o)UNDO.snap.set(k,undoSnap(o))}
+function undoRec(k,o){if(UNDO.quiet||!o)return;const now=undoSnap(o),prev=UNDO.snap.get(k);UNDO.snap.set(k,now);if(prev==null||prev===now)return;
+  const a=document.activeElement,el=a&&a.id||null,last=UNDO.u[UNDO.u.length-1];
+  if(!(last&&last.k===k&&el&&el===UNDO.el&&Date.now()-UNDO.at<1500)){UNDO.u.push({k,s:prev});if(UNDO.u.length>100)UNDO.u.shift()}
+  UNDO.r=[];UNDO.at=Date.now();UNDO.el=el}
+function undoApply(from,to,label){const e=from.pop();if(!e){toast(label==='Undone'?'Nothing to undo':'Nothing to redo');return}
+  const o=undoObj(e.k);if(!o){undoApply(from,to,label);return}
+  to.push({k:e.k,s:undoSnap(o)});const keep={updatedAt:o.updatedAt,updatedBy:o.updatedBy};
+  Object.keys(o).forEach(x=>delete o[x]);Object.assign(o,JSON.parse(e.s),keep);UNDO.snap.set(e.k,e.s);UNDO.el=null;
+  UNDO.quiet=true;try{if(e.k==='master')touchMaster();else touch(o)}finally{UNDO.quiet=false}
+  if(e.k!=='master'&&S.view==='job'&&S.jobId!==e.k)S.jobId=e.k;
+  render();toast(label+(e.k==='master'?' (rate master)':''))}
+document.addEventListener('keydown',e=>{if(!(e.ctrlKey||e.metaKey)||e.altKey)return;const k=e.key.toLowerCase();if(k!=='z'&&k!=='y')return;
+  const t=e.target;if(t&&t.closest&&(t.closest('#authBox')||(t.matches('input,textarea')&&!t.dataset.b&&t.dataset.bu==null&&!t.dataset.quick)))return;
+  if(S.view!=='job'&&S.view!=='rates')return;e.preventDefault();
+  if(k==='y'||(k==='z'&&e.shiftKey))undoApply(UNDO.r,UNDO.u,'Redone');else undoApply(UNDO.u,UNDO.r,'Undone')},true);
 function queueSave(id){clearTimeout(saveTimers[id]);saveTimers[id]=setTimeout(()=>flush(id),500)}
 async function flush(id){
   const job=S.jobs.get(id);if(!job)return;
@@ -626,7 +647,7 @@ async function removeJob(id){
   else{try{await db.collection('jobs').doc(id).delete()}catch(e){toast('Could not delete the job.')}}
 }
 let mTimer=null,mWriting=false,mPending=false;
-function touchMaster(){S.master.updatedAt=Date.now();clearTimeout(mTimer);mTimer=setTimeout(saveMaster,500)}
+function touchMaster(){undoRec('master',S.master);S.master.updatedAt=Date.now();clearTimeout(mTimer);mTimer=setTimeout(saveMaster,500)}
 async function saveMaster(){mTimer=null;
   if(S.mode==='local'){lsSet('me.master',S.master);return}
   if(mWriting){mPending=true;return}mWriting=true;
@@ -991,6 +1012,7 @@ function canEdit(step,job){
 
 /* ---------- render ---------- */
 function render(){
+  if(S.view==='job'&&curJob()&&!UNDO.snap.has(S.jobId))undoBase(S.jobId);if(!UNDO.snap.has('master'))undoBase('master');
   const a=document.activeElement,fid=a&&a.id,ss=a&&a.selectionStart,se=a&&a.selectionEnd;
   document.querySelectorAll('.seg button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.role===S.role));
   let html='';
@@ -1335,21 +1357,26 @@ document.addEventListener('keydown',e=>{if(e.key==='Enter'){const r=e.target.clo
 function setTheme(t){if(t)document.documentElement.setAttribute('data-theme',t);else document.documentElement.removeAttribute('data-theme');lsSet('me.theme',t||'');const sl=document.getElementById('themeSel');if(sl)sl.value=t||'';V.sig=null;render()}
 /* ---------- Excel-like grid: arrow/Enter moves, Shift+select, block copy & paste, fill, Delete ---------- */
 const GRID='#app table';
-function cellOf(el){const td=el&&el.closest&&el.closest('td');const tb=td&&td.closest(GRID);if(!tb)return null;const tr=td.parentElement;let c=0;for(const x of tr.cells){if(x===td)break;c+=x.colSpan||1}
-  return {tb,ti:[...document.querySelectorAll(GRID)].indexOf(tb),r:[...tb.rows].indexOf(tr),c,td}}
+/* each box is its own cell, so a size cell with L × W × T counts as three columns, like Excel */
+const FLD='input:not([type=file]):not([type=checkbox]):not([type=radio]):not([type=button]),select,textarea';
+function cellsInRow(tr){const out=[];let c=0;for(const td of tr.cells){const fs=[...td.querySelectorAll(FLD)];
+    if(fs.length)fs.forEach((f,k)=>out.push({td,f,c:c*8+k}));else out.push({td,f:null,c:c*8});c+=td.colSpan||1}return out}
+function fieldIn(x){return x&&x.f&&!x.f.disabled?x.f:null}
+function cellOf(el){const td=el&&el.closest&&el.closest('td');const tb=td&&td.closest(GRID);if(!tb)return null;const tr=td.parentElement;
+  const x=cellsInRow(tr).find(x=>x.f===el)||cellsInRow(tr).find(x=>x.td===td);if(!x)return null;
+  return {tb,ti:[...document.querySelectorAll(GRID)].indexOf(tb),r:[...tb.rows].indexOf(tr),c:x.c,td,f:x.f}}
 function rowsOf(tb){return [...tb.rows]}
-function fieldIn(td){const f=td&&td.querySelector('input:not([type=file]):not([type=checkbox]),select,textarea');return f&&!f.disabled?f:null}
-function cellsInRow(tr){const out=[];let c=0;for(const td of tr.cells){const span=td.colSpan||1;out.push({td,c0:c,c1:c+span-1});c+=span}return out}
+function editable(tr){return cellsInRow(tr).filter(fieldIn)}
 function moveFrom(el,dr,dc){const p=cellOf(el);if(!p)return null;const rows=rowsOf(p.tb);
-  if(dc){const cs=cellsInRow(rows[p.r]).filter(x=>fieldIn(x.td));const i=cs.findIndex(x=>x.td===p.td);const t=cs[i+dc];return t?fieldIn(t.td):null}
-  for(let r=p.r+dr;r>=0&&r<rows.length;r+=dr){const cs=cellsInRow(rows[r]).filter(x=>fieldIn(x.td));if(!cs.length)continue;
-    const hit=cs.find(x=>x.c0<=p.c&&p.c<=x.c1)||cs.reduce((a,x)=>Math.abs(x.c0-p.c)<Math.abs(a.c0-p.c)?x:a);return fieldIn(hit.td)}
+  if(dc){const cs=editable(rows[p.r]);const i=cs.findIndex(x=>x.f===el);const t=cs[i+dc];return t?t.f:null}
+  for(let r=p.r+dr;r>=0&&r<rows.length;r+=dr){const cs=editable(rows[r]);if(!cs.length)continue;
+    const hit=cs.find(x=>x.c===p.c)||cs.reduce((a,x)=>Math.abs(x.c-p.c)<Math.abs(a.c-p.c)?x:a);return hit.f}
   return null}
 function go(el){if(!el)return;el.focus();try{el.select&&el.select()}catch(e){}const p=cellOf(el);if(p)S.sel={ti:p.ti,a:[p.r,p.c],b:[p.r,p.c]};paintSel()}
 function selCells(){const sel=S.sel;if(!sel)return [];const tb=document.querySelectorAll(GRID)[sel.ti];if(!tb)return [];const [r0,r1]=[Math.min(sel.a[0],sel.b[0]),Math.max(sel.a[0],sel.b[0])],[c0,c1]=[Math.min(sel.a[1],sel.b[1]),Math.max(sel.a[1],sel.b[1])];
-  const rows=rowsOf(tb),out=[];for(let r=r0;r<=r1;r++){if(!rows[r])continue;out.push(cellsInRow(rows[r]).filter(x=>x.c1>=c0&&x.c0<=c1))}return out}
-function paintSel(){document.querySelectorAll('td.xsel').forEach(t=>t.classList.remove('xsel'));const rs=selCells();if(rs.reduce((n,r)=>n+r.length,0)<2)return;rs.forEach(r=>r.forEach(x=>x.td.classList.add('xsel')))}
-function cellText(td){const f=td.querySelector('input,select,textarea');if(f)return f.tagName==='SELECT'?(f.selectedOptions[0]||{}).text||'':f.value;return td.textContent.trim()}
+  const rows=rowsOf(tb),out=[];for(let r=r0;r<=r1;r++){if(!rows[r])continue;const cs=cellsInRow(rows[r]).filter(x=>x.c>=c0&&x.c<=c1);if(cs.length)out.push(cs)}return out}
+function paintSel(){document.querySelectorAll('.xsel').forEach(t=>t.classList.remove('xsel'));const rs=selCells();if(rs.reduce((n,r)=>n+r.length,0)<2)return;rs.forEach(r=>r.forEach(x=>(x.f||x.td).classList.add('xsel')))}
+function gridText(x){const f=x.f;if(f)return f.tagName==='SELECT'?((f.selectedOptions[0]||{}).text||'').trim():String(f.value);return x.td.textContent.trim()}
 function applyCell(el,raw){if(!el||el.disabled)return null;let v=String(raw==null?'':raw).replace(/\r/g,'').trim();
   if(el.tagName==='SELECT'){const o=[...el.options].find(o=>o.text.trim().toLowerCase()===v.toLowerCase()||(o.value&&o.value.toLowerCase()===v.toLowerCase()));if(!o)return null;v=o.value||o.text}
   const isNum=el.hasAttribute('data-num')||el.dataset.bu!=null;if(isNum)v=v.replace(/^(rs\.?|inr)/i,'').replace(/[₹,\s]/g,'');
@@ -1358,7 +1385,7 @@ function applyCell(el,raw){if(!el||el.disabled)return null;let v=String(raw==nul
   const val=el.hasAttribute('data-num')?(v===''?'':(isFinite(+v)?+v:v)):v;
   if(scope==='job'){const job=curJob();if(!job)return null;const o=setPath(job,path,val);buDeps(job,null,path);if(o&&/\.holes$/.test(path))o.holesEst=false;return 'job'}
   if(scope==='master'){setPath(S.master,path,val);return 'master'}return null}
-function commit(kinds){if(kinds.has('job')&&curJob())touch(curJob());if(kinds.has('master'))touchMaster();const a=document.activeElement,id=a&&a.id;render();const el=id&&document.getElementById(id);if(el){el.focus({preventScroll:true});try{el.select&&el.select()}catch(e){}}}
+function commit(kinds){UNDO.el=null;if(kinds.has('job')&&curJob())touch(curJob());if(kinds.has('master'))touchMaster();const a=document.activeElement,id=a&&a.id;render();const el=id&&document.getElementById(id);if(el){el.focus({preventScroll:true});try{el.select&&el.select()}catch(e){}}}
 function copyText(t,msg){const done=()=>toast(msg||'Copied');
   const fb=()=>{const ta=document.createElement('textarea');ta.value=t;ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done()}catch(e){toast('Copy is blocked here. Use Excel export instead.')}ta.remove()};
   try{navigator.clipboard.writeText(t).then(done,fb)}catch(e){fb()}}
@@ -1368,24 +1395,28 @@ document.addEventListener('mousedown',e=>{const f=e.target.closest&&e.target.clo
 document.addEventListener('keydown',e=>{const el=e.target;if(!el.matches||!el.matches('input,select,textarea')||!cellOf(el)||el.tagName==='TEXTAREA')return;
   const k=e.key,multi=selCells().reduce((n,r)=>n+r.length,0)>1;
   if(e.shiftKey&&/^Arrow/.test(k)&&S.sel){const p=cellOf(el);const [dr,dc]={ArrowUp:[-1,0],ArrowDown:[1,0],ArrowLeft:[0,-1],ArrowRight:[0,1]}[k];
-    const tb=p.tb,rows=rowsOf(tb);let [r,c]=S.sel.b;if(dr){let rr=r+dr;while(rows[rr]&&!cellsInRow(rows[rr]).some(x=>fieldIn(x.td)))rr+=dr;if(rows[rr])r=rr}
-    else{const cs=cellsInRow(rows[r]).filter(x=>fieldIn(x.td));const i=cs.findIndex(x=>x.c0<=c&&c<=x.c1);const t=cs[(i<0?0:i)+dc];if(t)c=t.c0}
+    const tb=p.tb,rows=rowsOf(tb);let [r,c]=S.sel.b;if(dr){let rr=r+dr;while(rows[rr]&&!editable(rows[rr]).length)rr+=dr;if(rows[rr])r=rr}
+    else{const cs=cellsInRow(rows[r]);let i=cs.findIndex(x=>x.c===c);if(i<0)i=cs.findIndex(x=>x.c>c);const t=cs[(i<0?0:i)+dc];if(t)c=t.c}
     S.sel.b=[r,c];paintSel();e.preventDefault();return}
-  if((k==='Delete'||k==='Backspace')&&multi){const kinds=new Set();selCells().forEach(r=>r.forEach(x=>{const f=fieldIn(x.td);if(f&&(f.dataset.bu!=null||/bu\.rows\./.test(f.dataset.b||''))){const w=applyCell(f,'');if(w)kinds.add(w)}}));commit(kinds);e.preventDefault();return}
-  if((e.ctrlKey||e.metaKey)&&(k==='c'||k==='C')&&multi){copyText(selCells().map(r=>r.map(x=>cellText(x.td)).join('\t')).join('\n'),'Copied '+selCells().reduce((n,r)=>n+r.length,0)+' cells');e.preventDefault();return}
+  if((k==='Delete'||k==='Backspace')&&multi){const kinds=new Set();selCells().forEach(r=>r.forEach(x=>{const f=fieldIn(x);if(f&&f.tagName!=='SELECT'){const w=applyCell(f,'');if(w)kinds.add(w)}}));commit(kinds);e.preventDefault();return}
+  if((e.ctrlKey||e.metaKey)&&(k==='c'||k==='C'||k==='x'||k==='X')&&multi){const rs=selCells();copyText(rs.map(r=>r.map(gridText).join('\t')).join('\n'),'Copied '+rs.reduce((n,r)=>n+r.length,0)+' cells');
+    if(k==='x'||k==='X'){const kinds=new Set();rs.forEach(r=>r.forEach(x=>{const f=fieldIn(x);if(f&&f.tagName!=='SELECT'){const w=applyCell(f,'');if(w)kinds.add(w)}}));commit(kinds)}e.preventDefault();return}
   let dr=0,dc=0;const atStart=el.selectionStart===0&&el.selectionEnd===0,atEnd=el.value!=null&&el.selectionStart===String(el.value).length,all=el.selectionStart===0&&el.selectionEnd===String(el.value||'').length;
   if(k==='ArrowUp')dr=-1;else if(k==='ArrowDown')dr=1;else if(k==='Enter'&&!e.altKey)dr=e.shiftKey?-1:1;
   else if(k==='ArrowLeft'&&(el.tagName==='SELECT'||atStart||all))dc=-1;else if(k==='ArrowRight'&&(el.tagName==='SELECT'||atEnd||all))dc=1;
   if(!dr&&!dc)return;const t=moveFrom(el,dr,dc);e.preventDefault();if(el.tagName==='INPUT'&&e.type)el.dispatchEvent(new Event('change',{bubbles:true}));go(t&&document.getElementById(t.id)||t)});
 document.addEventListener('paste',e=>{const el=e.target;if(!el.matches||!el.matches('input,select')||!cellOf(el))return;
-  const txt=(e.clipboardData||window.clipboardData).getData('text');if(txt==null)return;const grid=txt.replace(/\r/g,'').replace(/\n$/,'').split('\n').map(l=>l.split('\t'));
+  const cd=e.clipboardData||window.clipboardData;let txt=cd&&cd.getData('text/plain');if(txt==null||txt==='')txt=cd&&cd.getData('text');if(txt==null)return;
+  const grid=txt.replace(/\r/g,'').replace(/\n+$/,'').split('\n').map(l=>l.split('\t'));
   const many=grid.length>1||grid[0].length>1,rs=selCells(),multi=rs.reduce((n,r)=>n+r.length,0)>1;if(!many&&!multi)return;
-  e.preventDefault();const kinds=new Set();let n=0;
-  if(!many&&multi){rs.forEach(r=>r.forEach(x=>{const w=applyCell(fieldIn(x.td),grid[0][0]);if(w){kinds.add(w);n++}}))}
+  e.preventDefault();const kinds=new Set();let n=0,skip=0;const put=(f,v)=>{const w=applyCell(f,v);if(w){kinds.add(w);n++}else if(f&&String(v).trim())skip++};
+  if(!many&&multi){rs.forEach(r=>r.forEach(x=>{const f=fieldIn(x);if(f)put(f,grid[0][0])}))}
   else{const p=cellOf(el),rows=rowsOf(p.tb);let r=p.r;
-    for(const line of grid){while(rows[r]&&!cellsInRow(rows[r]).some(x=>fieldIn(x.td)))r++;if(!rows[r])break;
-      const cs=cellsInRow(rows[r]).filter(x=>fieldIn(x.td)&&x.c1>=p.c);line.forEach((v,i)=>{const x=cs[i];const w=x&&applyCell(fieldIn(x.td),v);if(w){kinds.add(w);n++}});r++}}
-  S.sel=null;commit(kinds);toast(`Pasted ${n} cell${n===1?'':'s'}`)});
+    /* a selected block bigger than what was copied gets the copy repeated over it, as in Excel */
+    const sr=multi&&S.sel?Math.abs(S.sel.a[0]-S.sel.b[0])+1:0,reps=multi&&sr>grid.length&&sr%grid.length===0?sr/grid.length:1;
+    for(let k=0;k<reps;k++)for(const line of grid){while(rows[r]&&!editable(rows[r]).length)r++;if(!rows[r])break;
+      const cs=editable(rows[r]).filter(x=>x.c>=p.c);line.forEach((v,i)=>{const x=cs[i];if(x)put(x.f,v)});r++}}
+  S.sel=null;commit(kinds);toast(`Pasted ${n} cell${n===1?'':'s'}`+(skip?`. ${skip} not pasted (no matching option or locked).`:''))});
 /* ---------- isometric part views: 3D body when loaded, else a box / cylinder from the sizes. Black edges on white, 640×480 so a 5× hover stays sharp. ---------- */
 const TH={cache:new Map(),r:null,q:[],busy:false};
 function thumbKey(job,p){const cad=S.cad[job.id];if(cad&&cad.bodies&&cad.bodies.some(b=>b.pid===p.id))return 'cad:'+job.id+':'+p.id;
@@ -1662,7 +1693,7 @@ startLocal();
       if(ch.type==='removed'){S.jobs.delete(id);continue}
       if(writing[id]||pending[id])continue;
       const local=S.jobs.get(id),inc=JSON.parse(JSON.stringify(ch.doc.data()));if(local&&(local.updatedAt||0)>(inc.updatedAt||0))continue;
-      S.jobs.set(id,Object.assign({id},inc))}
+      S.jobs.set(id,Object.assign({id},inc));undoBase(id)}
     if(first){first=false;if(S.view==='job'&&!S.jobs.has(S.jobId))S.view='list';
       /* once: give older jobs the price summary the ERP fetches */
       if(can('edit')||can('quote'))setTimeout(()=>{for(const j of S.jobs.values())if(!j.example&&!(j.erp&&j.erp.v===1))flush(j.id)},3000)}
@@ -1674,9 +1705,20 @@ startLocal();
   db.doc('masters/access').onSnapshot(sn=>{if(sn.exists&&!aTimer)S.access=Object.assign({def:'sales',users:{}},JSON.parse(JSON.stringify(sn.data())));
     if(S.isOwner&&meId&&S.access.owner!==meId){S.access.owner=meId;touchAccess()}
     const a=document.activeElement;if(a&&a.dataset&&a.dataset.b)return;render()},()=>{});
-  db.doc('masters/rates').onSnapshot(s=>{if(s.exists){const d=JSON.parse(JSON.stringify(s.data()));if(!mWriting&&!mTimer&&(d.updatedAt||0)>=(S.master.updatedAt||0)){S.master=fixMaster(Object.assign(defaultMaster(),d))}}
+  db.doc('masters/rates').onSnapshot(s=>{if(s.exists){const d=JSON.parse(JSON.stringify(s.data()));if(!mWriting&&!mTimer&&(d.updatedAt||0)>=(S.master.updatedAt||0)){S.master=fixMaster(Object.assign(defaultMaster(),d));undoBase('master')}}
     const a=document.activeElement;if(a&&a.dataset&&a.dataset.b)return;render()});
   render();
 })();
 window.__app={toast,S,render};})();
+</script>
+<script>
+/* Clicking into a box selects what is already in it, like Excel: the first key you type replaces the old value.
+   Click again (or use the arrow keys) to put the cursor inside and change just part of it. */
+(function(){
+  const TXT='input:not([type]),input[type=text],input[type=number],input[type=search],input[type=email],input[type=tel],input[type=url],input[type=password]';
+  let armed=null;
+  document.addEventListener('mousedown',e=>{const f=e.target.closest&&e.target.closest(TXT);armed=(f&&!f.disabled&&!f.readOnly&&f!==document.activeElement)?f:null},true);
+  document.addEventListener('mouseup',e=>{const f=armed;armed=null;if(!f||f!==document.activeElement)return;
+    try{if(f.selectionStart!==f.selectionEnd)return;f.select();e.preventDefault()}catch(x){}},true);
+})();
 </script>
