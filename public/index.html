@@ -1378,7 +1378,7 @@ function selCells(){const sel=S.sel;if(!sel)return [];const tb=document.querySel
 function paintSel(){document.querySelectorAll('.xsel').forEach(t=>t.classList.remove('xsel'));const rs=selCells();if(rs.reduce((n,r)=>n+r.length,0)<2)return;rs.forEach(r=>r.forEach(x=>(x.f||x.td).classList.add('xsel')))}
 function gridText(x){const f=x.f;if(f)return f.tagName==='SELECT'?((f.selectedOptions[0]||{}).text||'').trim():String(f.value);return x.td.textContent.trim()}
 function applyCell(el,raw){if(!el||el.disabled)return null;let v=String(raw==null?'':raw).replace(/\r/g,'').trim();
-  if(el.tagName==='SELECT'){const o=[...el.options].find(o=>o.text.trim().toLowerCase()===v.toLowerCase()||(o.value&&o.value.toLowerCase()===v.toLowerCase()));if(!o)return null;v=o.value||o.text}
+  if(el.tagName==='SELECT'){const nz=x=>String(x||'').toLowerCase().replace(/\s+/g,''),w=nz(v);const o=[...el.options].find(o=>nz(o.text)===w||(o.value&&nz(o.value)===w))||(w.length>2?[...el.options].find(o=>nz(o.text).startsWith(w)||nz(o.text).includes('('+w+')')):null);if(!o)return null;v=o.value||o.text}
   const isNum=el.hasAttribute('data-num')||el.dataset.bu!=null;if(isNum)v=v.replace(/^(rs\.?|inr)/i,'').replace(/[₹,\s]/g,'');
   if(el.dataset.bu!=null){const job=curJob();if(!job)return null;job.bu=job.bu||{};job.bu.ov=job.bu.ov||{};if(v==='')delete job.bu.ov[el.dataset.bu];else job.bu.ov[el.dataset.bu]=v;buDeps(job,el.dataset.bu);return 'job'}
   const b=el.dataset.b;if(!b)return null;const scope=b.slice(0,b.indexOf(':')),path=b.slice(b.indexOf(':')+1);
@@ -1399,6 +1399,7 @@ document.addEventListener('keydown',e=>{const el=e.target;if(!el.matches||!el.ma
     else{const cs=cellsInRow(rows[r]);let i=cs.findIndex(x=>x.c===c);if(i<0)i=cs.findIndex(x=>x.c>c);const t=cs[(i<0?0:i)+dc];if(t)c=t.c}
     S.sel.b=[r,c];paintSel();e.preventDefault();return}
   if((k==='Delete'||k==='Backspace')&&multi){const kinds=new Set();selCells().forEach(r=>r.forEach(x=>{const f=fieldIn(x);if(f&&f.tagName!=='SELECT'){const w=applyCell(f,'');if(w)kinds.add(w)}}));commit(kinds);e.preventDefault();return}
+  if((e.ctrlKey||e.metaKey)&&(k==='c'||k==='C')&&!multi&&el.tagName==='SELECT'){copyText(((el.selectedOptions[0]||{}).text||'').trim(),'Copied');e.preventDefault();return}
   if((e.ctrlKey||e.metaKey)&&(k==='c'||k==='C'||k==='x'||k==='X')&&multi){const rs=selCells();copyText(rs.map(r=>r.map(gridText).join('\t')).join('\n'),'Copied '+rs.reduce((n,r)=>n+r.length,0)+' cells');
     if(k==='x'||k==='X'){const kinds=new Set();rs.forEach(r=>r.forEach(x=>{const f=fieldIn(x);if(f&&f.tagName!=='SELECT'){const w=applyCell(f,'');if(w)kinds.add(w)}}));commit(kinds)}e.preventDefault();return}
   let dr=0,dc=0;const atStart=el.selectionStart===0&&el.selectionEnd===0,atEnd=el.value!=null&&el.selectionStart===String(el.value).length,all=el.selectionStart===0&&el.selectionEnd===String(el.value||'').length;
@@ -1408,9 +1409,10 @@ document.addEventListener('keydown',e=>{const el=e.target;if(!el.matches||!el.ma
 document.addEventListener('paste',e=>{const el=e.target;if(!el.matches||!el.matches('input,select')||!cellOf(el))return;
   const cd=e.clipboardData||window.clipboardData;let txt=cd&&cd.getData('text/plain');if(txt==null||txt==='')txt=cd&&cd.getData('text');if(txt==null)return;
   const grid=txt.replace(/\r/g,'').replace(/\n+$/,'').split('\n').map(l=>l.split('\t'));
-  const many=grid.length>1||grid[0].length>1,rs=selCells(),multi=rs.reduce((n,r)=>n+r.length,0)>1;if(!many&&!multi)return;
+  const many=grid.length>1||grid[0].length>1,rs=selCells(),multi=rs.reduce((n,r)=>n+r.length,0)>1;if(!many&&!multi&&el.tagName!=='SELECT')return;
   e.preventDefault();const kinds=new Set();let n=0,skip=0;const put=(f,v)=>{const w=applyCell(f,v);if(w){kinds.add(w);n++}else if(f&&String(v).trim())skip++};
-  if(!many&&multi){rs.forEach(r=>r.forEach(x=>{const f=fieldIn(x);if(f)put(f,grid[0][0])}))}
+  if(!many&&!multi)put(el,grid[0][0]);
+  else if(!many&&multi){rs.forEach(r=>r.forEach(x=>{const f=fieldIn(x);if(f)put(f,grid[0][0])}))}
   else{const p=cellOf(el),rows=rowsOf(p.tb);let r=p.r;
     /* a selected block bigger than what was copied gets the copy repeated over it, as in Excel */
     const sr=multi&&S.sel?Math.abs(S.sel.a[0]-S.sel.b[0])+1:0,reps=multi&&sr>grid.length&&sr%grid.length===0?sr/grid.length:1;
