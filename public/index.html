@@ -394,6 +394,30 @@ function loadNames(ids){if(!user)return;const need=ids.filter(id=>!namesTried.ha
   user.profiles(ids).then(ps=>{S.names=S.names||{};let ch=false;for(const id of ids){const n=ps&&ps[id]&&ps[id].name;if(n&&S.names[id]!==n){S.names[id]=n;ch=true}}if(ch&&S.view==='rates')render()}).catch(()=>{})}
 /* ---------- masters that grow with use ---------- */
 const nrm=x=>String(x||'').toLowerCase().replace(/[^a-z0-9]+/g,'');
+async function importCustomers(file){
+  if(!can('master')){toast('Your role cannot edit the masters.');return}
+  try{const ext=(file.name.split('.').pop()||'').toLowerCase();let rows;
+    if(ext==='csv'||ext==='txt')rows=parseCsv(await file.text());
+    else if(ext==='xlsx'||ext==='xlsm'){if(!window.ExcelJS)throw new Error('The Excel reader did not load. Check your connection and try again.');
+      const wb=new ExcelJS.Workbook();await wb.xlsx.load(await file.arrayBuffer());rows=[];
+      wb.eachSheet(ws=>{const r=[];ws.eachRow({includeEmpty:false},row=>r.push(row.values.slice(1).map(cellText)));if(r.length>rows.length)rows=r})}
+    else throw new Error('Use an Excel (.xlsx) or CSV file. Save old .xls files as .xlsx first.');
+    rows=(rows||[]).map(r=>(r||[]).map(x=>String(x==null?'':x).trim())).filter(r=>r.some(Boolean));
+    if(!rows.length)throw new Error('The file has no rows.');
+    const COLS=[['name',/account ?name|customer|company|party|client|^name|firm/],['contact',/contact|person|attn/],['gst',/g\.?s\.?t\.? ?(no|in|number)|gstin/],['pan',/^pan/],['state',/^state( ?name)?$/],['city',/^city|town/],['pin',/pin|zip/],['a1',/add(ress)? ?line ?(one|1)|^address$/],['a2',/add(ress)? ?line ?(two|2)/],['area',/^area|location|place/],['km',/km|distance|dist/],['cls',/class|grade|categ/]];
+    let hi=-1,map={},best=0;for(let i=0;i<Math.min(15,rows.length);i++){const m={};rows[i].forEach((h,c)=>{const t=h.toLowerCase().replace(/\s+/g,' ').trim();for(const [k,re] of COLS)if(m[k]==null&&t.length<40&&re.test(t)){m[k]=c;break}});const n=Object.keys(m).length+(rows[i].filter(Boolean).length>1?1:0);if(m.name!=null&&n>best){best=n;hi=i;map=m}}
+    if(hi<0)map={name:0,contact:1,city:2,km:3,cls:4};
+    const M=S.master;M.customers=M.customers||[];let add=0,upd=0;
+    for(const r of rows.slice(hi+1)){const g=k=>map[k]!=null?(r[map[k]]||'').trim():'';const name=g('name');if(!name)continue;
+      let cls=g('cls').toUpperCase();const ck=Object.keys(CLASS_NAMES).find(k=>cls===k||cls.startsWith(k+' ')||CLASS_NAMES[k].toUpperCase()===cls);cls=ck||'';
+      const km=num(g('km').replace(/[^0-9.]/g,''))||'',gst=g('gst').toUpperCase();let c=gst?M.customers.find(x=>String(x.gst||'').toUpperCase()===gst):null;if(!c){c=custOf(M,name);if(c&&gst&&c.gst&&String(c.gst).toUpperCase()!==gst)c=null}
+      const extra={};for(const k of ['gst','pan','state','pin','area'])if(g(k))extra[k]=g(k);const ad=[g('a1'),g('a2')].filter(Boolean).join(', ');if(ad)extra.addr=ad;
+      const city=g('city')||g('area');
+      if(c){if(g('contact'))c.contact=g('contact');if(city)c.city=city;if(km)c.km=km;if(cls)c.cls=cls;Object.assign(c,extra);upd++}
+      else{M.customers.push(Object.assign({id:uid(),name,contact:g('contact'),city,km,cls:cls||'C'},extra));add++}}
+    if(!add&&!upd)throw new Error('No customer names found. Put the names in a column headed Customer.');
+    touchMaster();render();toast(`Customers: ${add} added${upd?`, ${upd} updated`:''}.`);
+  }catch(e){toast(String(e&&e.message||e))}}
 function custOf(M,name){const n=nrm(name);return n?(M.customers||[]).find(c=>nrm(c.name)===n):null}
 function bopHit(M,name,spec){const n=nrm(name),sp=nrm(spec),l=String(name||'').toLowerCase();
   return M.bop.find(x=>nrm(x.name)===n&&(!sp||nrm(x.spec)===sp))||M.bop.find(x=>nrm(x.name)===n)||M.bop.find(x=>l.includes(x.name.toLowerCase().split(' ')[0]))}
@@ -1246,7 +1270,7 @@ function renderRates(){
   let body='';
   if(S.rmTab==='cus'){const cnt={};for(const j of S.jobs.values()){const c=custOf(M,j.customer);if(c)cnt[c.id]=(cnt[c.id]||0)+1}
     body=`<table><thead><tr><th>Customer</th><th>Contact person</th><th>City</th><th class="r">Distance km</th><th>Usual class</th><th class="r">Jobs</th><th></th></tr></thead><tbody>${M.customers.map(c=>`<tr><td class="w-name">${inp('cn'+c.id,`master:customers.#${c.id}.name`,c.name,ed)}</td><td class="w-name">${inp('cc'+c.id,`master:customers.#${c.id}.contact`,c.contact,ed)}</td><td class="w-mat">${inp('ct'+c.id,`master:customers.#${c.id}.city`,c.city,ed)}</td><td class="w-d">${nIn('ck'+c.id,`master:customers.#${c.id}.km`,c.km,ed)}</td><td><select id="cl_${c.id}" data-b="master:customers.#${c.id}.cls" ${dis(ed)}>${Object.keys(CLASS_NAMES).map(k=>`<option value="${k}" ${k===(c.cls||'C')?'selected':''}>${k} · ${CLASS_NAMES[k]}</option>`).join('')}</select></td><td class="r mono">${cnt[c.id]||0}</td><td>${ed?`<button class="del" type="button" data-delm="customers|${c.id}" aria-label="Remove">×</button>`:''}</td></tr>`).join('')}</tbody></table>
-    <div class="pb muted" style="font-size:13px">${M.customers.length?'':'No customers yet. '}New customers are added here when a job is marked quoted. Picking a customer on a new enquiry fills in the contact, distance and usual class.${ed?' <button class="btn sm" type="button" data-addm="customers">+ Add customer</button>':''}</div>`}
+    <div class="pb muted" style="font-size:13px">${M.customers.length?'':'No customers yet. '}New customers are added here when a job is marked quoted. Picking a customer on a new enquiry fills in the contact, distance and usual class.${ed?' <button class="btn sm" type="button" data-addm="customers">+ Add customer</button> <label class="btn sm" title="Excel or CSV export of your customer accounts. The same GST no or name updates the existing customer.">Import list (Excel / CSV)<input type="file" id="cusFile" accept=".xlsx,.xlsm,.csv,.txt" hidden></label><br><span style="font-size:12.5px">Import reads your accounts export as it is: <b>Account Name</b> (or Customer), City, GST no, PAN, State, Pin code and address, plus Contact, Distance km and Class (A to E) if you have them. Only the name is needed. A customer already in the list is updated, not added twice.</span>':''}</div>`}
   if(S.rmTab==='users'){const A=S.access=S.access||{def:'sales',users:{}},ued=can('users');A.users=A.users||{};
     const ids=[...new Set([...(A.owner?[A.owner]:[]),...(meId?[meId]:[]),...(S.people||[]),...Object.keys(A.users)])];loadNames(ids);
     const nm=id=>(S.names||{})[id]||(id===meId?(S.meName||'You'):'Someone');
@@ -1341,6 +1365,7 @@ document.addEventListener('change',e=>{
   if(e.target.id==='udef'){if(!can('users'))return;S.access.def=e.target.value;touchAccess();render();return}
   if(e.target.id==='themeSel'){setTheme(e.target.value);return}
   if(e.target.id==='cadFile'){const fs=[...e.target.files];e.target.value='';if(fs.length)importCad(curJob(),fs);return}
+  if(e.target.id==='cusFile'){const f=e.target.files[0];e.target.value='';if(f)importCustomers(f);return}
   if(e.target.id==='bomFile'){const f=e.target.files[0];e.target.value='';if(f)importBom(curJob(),f);return}
   if(e.target.id==='addBo'){const v=e.target.value,job=curJob();if(!v||!job)return;const b=S.master.bop.find(x=>x.id===v);
     job.parts.push(b?{id:uid(),cat:'bo',name:b.name,spec:b.spec,make:b.make,qty:1,rate:b.rate,disc:0}:{id:uid(),cat:'bo',name:'New item',spec:'',make:'',qty:1,rate:0,disc:0});touch(job);render();return}
