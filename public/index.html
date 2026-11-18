@@ -711,7 +711,12 @@ function holesFromFeat(f,k){const est=Math.max(4,Math.round(k.L*k.W/14000));if(!
   return {holes:n,holesEst:false,gun:Math.round(g),gunA:Math.round(ga),gunEst:true}}
 /* standard screws named by their DIN/ISO number in the model, e.g. DIN912_88_10_35 = socket head cap screw, grade 8.8, M10 × 35 */
 const DIN_NAMES={912:'Socket head cap screw',4762:'Socket head cap screw',7991:'CSK screw',10642:'CSK screw',7984:'Low head cap screw',933:'Hex bolt',931:'Hex bolt',4017:'Hex bolt',4014:'Hex bolt',934:'Hex nut',6325:'Dowel pin',8734:'Dowel pin',7979:'Dowel pin',913:'Grub screw',914:'Grub screw',916:'Grub screw',6912:'Low head cap screw',125:'Washer',471:'Circlip',472:'Circlip'};
-function dinScrew(name,b){const m=String(name||'').replace(/_/g,' ').match(/\b(?:din|iso)\s*-?\s*(\d{3,5})\b\s*(?:(88|8\.8|109|10\.9|129|12\.9)\s+)?(?:m\s*)?(\d{1,2})?(?:\s*x?\s*(\d{1,3}))?/i);if(!m)return null;
+/* HASCO catalogue names, e.g. "E 1200 / 8 × 40 - Cylinder Head Screw", "E 1302 / 8 × 50 - Dowel Pin", "EPH 8 - 200 - Straight Ejector Pin" */
+const HASCO={1200:['Socket head cap screw','M','12.9'],1220:['CSK screw','M','12.9'],1230:['Grub screw','M',''],1240:['Shoulder screw','Ø',''],1300:['Dowel pin','Ø','m6'],1302:['Dowel pin','Ø','m6'],1310:['Dowel pin','Ø','m6'],1710:['Ejector pin','Ø',''],1020:['Guide bolt','Ø',''],1035:['Guide bolt','Ø',''],1000:['Guide bolt','Ø','']};
+function hascoPart(name){const s=String(name||'').replace(/_/g,' ');let m=s.match(/\bE\s?(\d{4,5})\s*\/\s*(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)/i);
+  if(m){const h=HASCO[m[1]];const d=m[2].replace(',','.'),L=m[3].replace(',','.');if(!h)return null;return {name:`${h[0]} (HASCO E ${m[1]})`,spec:`${h[1]}${d} × ${L}`+(h[2]?`, ${h[2]}`:'')}}
+  m=s.match(/\bEPH\s*(\d+(?:[.,]\d+)?)\s*-\s*(\d+)/i);if(m)return {name:'Ejector pin (HASCO EPH)',spec:`Ø${m[1].replace(',','.')} × ${m[2]}`};return null}
+function dinScrew(name,b){const hp=hascoPart(name);if(hp)return hp;const m=String(name||'').replace(/_/g,' ').match(/\b(?:din|iso)\s*-?\s*(\d{3,5})\b\s*(?:(88|8\.8|109|10\.9|129|12\.9)\s+)?(?:m\s*)?(\d{1,2})?(?:\s*x?\s*(\d{1,3}))?/i);if(!m)return null;
   const t=DIN_NAMES[m[1]];if(!t)return null;const pin=/pin/i.test(t),d=m[3]?+m[3]:0;let L=m[4]?+m[4]:0;
   if(b&&b.dims&&d){/* length from the solid: overall length less the head for cap screws and bolts (CSK screws and pins are measured overall); snapped to the standard length when within 1.5 mm */
     const K={912:1,4762:1,6912:0.7,7984:0.65,933:0.7,931:0.7,4017:0.7,4014:0.7}[m[1]]||0,g=Math.max(...b.dims)-K*d,STD=[3,4,5,6,8,10,12,14,16,18,20,22,25,28,30,35,40,45,50,55,60,65,70,75,80,90,100,110,120,130,140,150,160,180,200,220,240,260,280,300],n=STD.reduce((x,y)=>Math.abs(y-g)<Math.abs(x-g)?y:x);
@@ -835,15 +840,74 @@ if(!BOPR.test(nm.replace(/_/g,' '))&&I){if(fcache.has(fk))feat=fcache.get(fk);el
 if(i%8===0)postMessage({p:0.8+0.15*i/r.meshes.length});
 out.push({name:m.name||names.get(i)||('Body '+(i+1)),dims:[mx[0]-mn[0],mx[1]-mn[1],mx[2]-mn[2]],min:mn,max:mx,vol:Math.abs(vol),pos:P,idx:I,feat});tr.push(P.buffer);if(I)tr.push(I.buffer)});
 postMessage({bodies:out},tr)}catch(err){postMessage({err:String(err&&err.message||err)})}}`;
-function readCad(file,onProgress){
+/* Split one big STEP file into several smaller STEP files that each hold the whole assembly tree
+   but only some of the solids, so each piece fits in the 3D reader's memory. Returns null when the
+   file has fewer than two solids or does not look like STEP. */
+function splitStep(text,target){
+  const di=text.indexOf('DATA;');if(di<0)return null;const ei=text.lastIndexOf('ENDSEC;');if(ei<di)return null;
+  const head=text.slice(0,di+5),tail=text.slice(ei);
+  const ids=[],txt=[],typ=[];const idx=new Map();
+  let i=di+5,n=ei,st=i,q=false;
+  for(;i<n;i++){const c=text.charCodeAt(i);
+    if(q){if(c===39){if(text.charCodeAt(i+1)===39)i++;else q=false}continue}
+    if(c===39){q=true;continue}
+    if(c===59){const s=text.slice(st,i+1).trim();st=i+1;const m=/^#(\d+)\s*=\s*\(?\s*([A-Z0-9_]*)/.exec(s);if(m){idx.set(+m[1],ids.length);ids.push(+m[1]);txt.push(s);typ.push(m[2])}}}
+  const N=ids.length;const refs=new Array(N);
+  for(let k=0;k<N;k++){const s=txt[k].replace(/'(?:[^']|'')*'/g,'');const eq=s.indexOf('=');const out=[];const re=/#(\d+)/g;re.lastIndex=eq;let m;while((m=re.exec(s))){const j=idx.get(+m[1]);if(j!=null)out.push(j)}refs[k]=out}
+  const SOLID=/^(MANIFOLD_SOLID_BREP|BREP_WITH_VOIDS|FACETED_BREP|SHELL_BASED_SURFACE_MODEL|GEOMETRIC_CURVE_SET|GEOMETRIC_SET)$/;
+  const STYLE=/^(STYLED_ITEM|OVER_RIDING_STYLED_ITEM|MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION|PRESENTATION_LAYER_ASSIGNMENT|DRAUGHTING_MODEL)$/;
+  const solids=[];for(let k=0;k<N;k++)if(SOLID.test(typ[k]))solids.push(k);
+  if(solids.length<2)return null;
+  const owner=new Int32Array(N).fill(-1);const size=new Float64Array(solids.length);
+  solids.forEach((s,si)=>{const stack=[s];while(stack.length){const k=stack.pop();const o=owner[k];if(o===si)continue;if(o===-1)owner[k]=si;else if(o>=0)owner[k]=-2;else if(o===-2&&k!==s)continue;if(owner[k]===si)size[si]+=txt[k].length;for(const r of refs[k])stack.push(r)}});
+  /* group the solids into pieces of about `target` characters */
+  const order=solids.map((_,si)=>si);const groups=[];let cur=[],cs=0;
+  for(const si of order){if(cur.length&&cs+size[si]>target){groups.push(cur);cur=[];cs=0}cur.push(si);cs+=size[si]}if(cur.length)groups.push(cur);
+  if(groups.length<2)return null;
+  const solidAt=new Int32Array(N).fill(-1);solids.forEach((s,si)=>solidAt[s]=si);
+  const pieces=[];
+  for(const g of groups){const inG=new Uint8Array(solids.length);for(const si of g)inG[si]=1;
+    const keep=new Uint8Array(N);for(let k=0;k<N;k++){const o=owner[k];keep[k]=(o===-1&&!STYLE.test(typ[k]))||o===-2||(o>=0&&inG[o])?1:0}
+    const body=new Array(N);for(let k=0;k<N;k++)body[k]=txt[k];
+    /* shape representations lose the solids that are not in this piece; anything else left pointing at a dropped entity is dropped too */
+    const R=refs.slice();let changed=true;while(changed){changed=false;
+      for(let k=0;k<N;k++){if(!keep[k])continue;const miss=R[k].filter(r=>!keep[r]);if(!miss.length)continue;
+        if(/SHAPE_REPRESENTATION$/.test(typ[k])&&miss.every(r=>solidAt[r]>=0)){let s=body[k];for(const r of miss)s=s.replace(new RegExp('#'+ids[r]+'(?!\\d)\\s*,?'),'');body[k]=s.replace(/,\s*\)/g,')');R[k]=R[k].filter(r=>keep[r]);}
+        else{keep[k]=0;changed=true}}}
+    let out=head+'\n';const parts=[];for(let k=0;k<N;k++)if(keep[k])parts.push(body[k]);
+    pieces.push(out+parts.join('\n')+'\n'+tail)}
+  return pieces;
+}
+const SPLIT_SRC=()=>`${splitStep.toString()}
+onmessage=e=>{try{const text=new TextDecoder('latin1').decode(e.data.buf);const ps=splitStep(text,e.data.target);
+if(!ps){postMessage({pieces:null});return}const enc=new TextEncoder();const out=ps.map(p=>enc.encode(p).buffer);postMessage({pieces:out},out)}catch(err){postMessage({err:String(err&&err.message||err)})}}`;
+function splitStepFile(buf,target){return new Promise((res,rej)=>{let w;try{w=new Worker(URL.createObjectURL(new Blob([SPLIT_SRC()],{type:'text/javascript'})))}catch(e){return rej(e)}
+  w.onmessage=e=>{w.terminate();e.data.err?rej(new Error(e.data.err)):res(e.data.pieces)};w.onerror=ev=>{w.terminate();rej(new Error(ev.message||'split failed'))};w.postMessage({buf,target},[buf])})}
+/* Big STEP files can fill the reader's 2 GB of memory; it then returns every part with no shape. Such files are read in pieces,
+   each piece holding the whole assembly tree but only some of the solids, each in a fresh reader. */
+const CAD_BIG=30e6,CAD_PIECE=20e6;
+const hasShape=b=>b&&b.pos&&b.pos.length>=9&&b.dims.every(d=>isFinite(d)&&d>=0&&d<1e6);
+async function readCad(file,onProgress){
+  const ext=(file.name.split('.').pop()||'').toLowerCase();
+  if(!/^(stp|step|igs|iges)$/.test(ext))throw new Error('Use a STEP (.stp, .step) or IGES (.igs, .iges) file.');
+  const step=/^(stp|step)$/.test(ext);let bodies=null;
+  if(!step||file.size<=CAD_BIG){bodies=await readCadOnce(await file.arrayBuffer(),ext,onProgress);
+    if(!step||bodies.filter(hasShape).length>=bodies.length/2)return cleanBodies(bodies)}
+  onProgress(0.02);let pieces=null;try{pieces=await splitStepFile(await file.arrayBuffer(),CAD_PIECE)}catch(e){}
+  if(!pieces){if(bodies)return cleanBodies(bodies);return cleanBodies(await readCadOnce(await file.arrayBuffer(),ext,onProgress))}
+  const all=[];for(let i=0;i<pieces.length;i++){const bs=await readCadOnce(pieces[i],ext,p=>onProgress(0.05+0.95*(i+p)/pieces.length));pieces[i]=null;all.push(...bs)}
+  return cleanBodies(all)}
+function cleanBodies(bodies){const ok=bodies.filter(hasShape),bad=bodies.length-ok.length;
+  if(!ok.length)throw new Error(bodies.length?`The file opened, but none of its ${bodies.length} parts came with a shape that could be read. Export the STEP again (AP214 or AP242, solids), or send the parts as separate files.`:'No solid bodies were found in this file.');
+  if(bad)setTimeout(()=>toast(`${bad} of ${bodies.length} bodies had no readable shape and were left out.`),3000);
+  return ok}
+function readCadOnce(buf,ext,onProgress){
   return new Promise(async(res,rej)=>{
-    const ext=(file.name.split('.').pop()||'').toLowerCase();
-    if(!/^(stp|step|igs|iges)$/.test(ext))return rej(new Error('Use a STEP (.stp, .step) or IGES (.igs, .iges) file.'));
     const base=new URL('./',document.baseURI||location.href).href;let w;
     try{w=new Worker(URL.createObjectURL(new Blob([WORKER_SRC(base)],{type:'text/javascript'})))}catch(e){return rej(new Error('This viewer cannot start the 3D reader. Open the app from its own link and try again.'))}
     w.onmessage=e=>{if(e.data.p!=null){onProgress(e.data.p);return}w.terminate();e.data.err?rej(new Error(e.data.err)):res(e.data.bodies)};
     w.onerror=ev=>{w.terminate();rej(new Error('The 3D reader could not load here ('+(ev.message||'blocked')+'). Open the app from its own link and try again.'))};
-    const buf=await file.arrayBuffer();w.postMessage({buf,ext},[buf]);
+    w.postMessage({buf,ext},[buf]);
   });
 }
 /* one assembly file, or several part files at once: separate part files are read one after another and laid side by side */
@@ -862,7 +926,7 @@ async function importCad(job,files){files=[].concat(files);const file={name:file
     if(!bodies.length)throw new Error('No solid bodies were found in this file.');
     const parts=partsFromBodies(bodies);
     let mn=[1e18,1e18,1e18],mx=[-1e18,-1e18,-1e18];bodies.forEach(b=>{for(let a=0;a<3;a++){mn[a]=Math.min(mn[a],b.min[a]);mx[a]=Math.max(mx[a],b.max[a])}});
-    const ov=[0,1,2].map(a=>Math.round(mx[a]-mn[a])),srt=[...ov].sort((x,y)=>y-x);
+    const ov=[0,1,2].map(a=>{const d=mx[a]-mn[a];return isFinite(d)&&d>=0&&d<1e6?Math.round(d):0}),srt=[...ov].sort((x,y)=>y-x);
     job.parts=parts;job.size=files.length>1?(()=>{const pl=parts.filter(p=>p.cat==='pl');const L=Math.max(0,...pl.map(p=>Math.max(num(p.L),num(p.W)))),W=Math.max(0,...pl.map(p=>Math.min(num(p.L),num(p.W)))),H=pl.reduce((a,p)=>a+num(p.T)*num(p.qty),0);return {L,W,H}})():{L:srt[0],W:srt[1],H:srt[2]};delete job.isoImg;
     job.model={file:file.name,bodies:bodies.length,at:Date.now(),feat:bodies.some(b=>b.feat),counts:{pl:parts.filter(p=>p.cat==='pl').length,rd:parts.filter(p=>p.cat==='rd').length,bo:parts.filter(p=>p.cat==='bo').length}};
     S.cad[job.id]={bodies,file:file.name};touch(job);
@@ -1091,7 +1155,7 @@ function renderJob(job){
   <nav class="steps" aria-label="Job steps">${steps}</nav>${body}`;
 }
 function feasBanner(job){const l=feasChecks(job);if(!l.length)return '';const b=l.filter(x=>x.sev==='bad'),np=new Set(b.map(x=>x.pid)).size,ts=[...new Set((b.length?b:l).map(x=>x.t))];
-  return `<div class="banner ${b.length?'bad':'warn'}" role="alert"><b>${b.length?`Not feasible on 3-axis VMC: ${np} part${np>1?'s':''}.`:'Needs angle fixture.'}</b> ${esc(ts.join(' · '))}. ${S.step!==1?'<button class="btn sm" type="button" data-step="1">See details</button>':'<a href="#feas">See details below</a>'}</div>`}
+  return `<div class="banner ${b.length?'bad':'warn'}" role="alert"><b>${b.length?`Not feasible: ${np} part${np>1?'s':''}.`:'Needs angle fixture.'}</b> ${esc(ts.join(' · '))}. ${S.step!==1?'<button class="btn sm" type="button" data-step="1">See details</button>':'<a href="#feas">See details below</a>'}</div>`}
 function dis(ed){return ed?'':'disabled'}
 function inp(id,b,v,ed,cls,extra){return `<input id="${id}" data-b="${b}" value="${esc(v)}" ${dis(ed)} class="${cls||''}" ${extra||''}>`}
 function nIn(id,b,v,ed,cls){return `<input id="${id}" data-b="${b}" data-num value="${esc(v)}" inputmode="decimal" ${dis(ed)} class="n ${cls||''}">`}
