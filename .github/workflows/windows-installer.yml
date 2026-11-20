@@ -1,0 +1,58 @@
+# Builds the Windows installer (Mould-Estimator-Setup-x.y.z.exe) on a Windows machine at GitHub.
+# - Each pull request that touches the app: a "Test build" pre-release to try before merging.
+# - Each merge to main: a normal release. Download the .exe from the repository's Releases page.
+# - Actions tab -> "Windows installer" -> "Run workflow" builds one by hand.
+name: Windows installer
+
+on:
+  push:
+    branches: [main]
+    paths: ["public/**", "netlify/**", "lib/**", "desktop/**", "package*.json", ".github/workflows/windows-installer.yml"]
+  pull_request:
+    paths: ["public/**", "netlify/**", "lib/**", "desktop/**", "package*.json", ".github/workflows/windows-installer.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        run: |
+          npm ci
+          npm ci --prefix desktop
+      - name: Build installer
+        shell: bash
+        working-directory: desktop
+        run: |
+          VERSION="1.0.${{ github.run_number }}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          node build.mjs
+          npx electron-builder --win nsis --x64 --publish never -c.extraMetadata.version="$VERSION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Mould-Estimator-Setup-${{ env.VERSION }}
+          path: desktop/release/*.exe
+      - name: Publish on the Releases page
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            gh release create "v$VERSION-test" desktop/release/*.exe --target "${{ github.event.pull_request.head.sha }}" \
+              --prerelease --title "Test build $VERSION (PR #${{ github.event.number }})" \
+              --notes "Test installer from pull request #${{ github.event.number }}. Not for customers yet."
+          else
+            gh release create "v$VERSION" desktop/release/*.exe --target "${{ github.sha }}" --latest \
+              --title "Mould Estimator $VERSION" --notes "Windows installer. Customers need a license key to start it."
+          fi

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>License Key Generator</title>
+<!-- Owner's tool: makes license keys for the Mould Estimator Windows app. Runs offline in Chrome or Edge.
+     Keep the private key secret: anyone who has it can make keys. -->
+<style>
+  :root{--bg:#f4f2ee;--surface:#fff;--ink:#222;--muted:#666;--line:#ddd;--accent:#c4581b;--ok:#2e7d32;--bad:#b3261e}
+  @media (prefers-color-scheme: dark){:root{--bg:#1c1b1a;--surface:#262524;--ink:#eee;--muted:#aaa;--line:#3a3836}}
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font:15px "Segoe UI",system-ui,sans-serif;padding:16px}
+  main{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:12px}
+  h1{margin:0;font-size:22px} h2{margin:0;font-size:17px} p{margin:0;color:var(--muted);line-height:1.45}
+  label{font-weight:600;display:flex;flex-direction:column;gap:6px} label span{font-weight:400;color:var(--muted);font-size:13px}
+  input,textarea{font:inherit;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit;width:100%}
+  textarea{font:13px Consolas,monospace;resize:vertical}
+  button{font:inherit;padding:10px 14px;border-radius:8px;border:1px solid var(--line);background:transparent;color:inherit;cursor:pointer}
+  button.go{background:var(--accent);color:#fff;border:0}
+  .row{display:flex;gap:12px;flex-wrap:wrap}.row>*{flex:1 1 200px}
+  .msg{color:var(--bad);min-height:1.3em}.msg.ok{color:var(--ok)}
+  table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+  td.k{font-family:Consolas,monospace;word-break:break-all}
+  .wrap{overflow-x:auto}
+</style></head>
+<body><main>
+  <div class="card">
+    <h1>Mould Estimator license keys</h1>
+    <p>Fill in the customer and press Make key. Send the key to the customer. They paste it into the app the first time it opens.</p>
+  </div>
+  <div class="card">
+    <label>Your private signing key<span>Keep this secret. It stays on this page and is never sent anywhere.</span>
+      <textarea id="priv" rows="2" spellcheck="false">__PRIVATE_KEY__</textarea></label>
+    <div class="row">
+      <label>Customer name<input id="name" placeholder="e.g. ABC Moulds Pvt Ltd"></label>
+      <label>Valid until<span>Leave empty for no end date</span><input id="exp" type="date"></label>
+    </div>
+    <label>Lock to one PC (optional)<span>Paste the "PC code" the customer sees on the activation screen, like ABCDE-FGH23. Leave empty to allow any PC.</span>
+      <input id="pc" placeholder="ABCDE-FGH23" style="font-family:Consolas,monospace;text-transform:uppercase"></label>
+    <button class="go" id="make" type="button">Make key</button>
+    <p class="msg" id="msg"></p>
+    <label>License key<textarea id="out" rows="4" readonly spellcheck="false"></textarea></label>
+    <div class="row"><button id="copy" type="button">Copy key</button></div>
+  </div>
+  <div class="card">
+    <h2>Keys made on this computer</h2>
+    <div class="wrap"><table><thead><tr><th>Date</th><th>Customer</th><th>PC</th><th>Until</th><th>Key</th></tr></thead><tbody id="hist"></tbody></table></div>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const b64u = bytes => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+const fromB64 = s => Uint8Array.from(atob(s.replace(/\s+/g,'')), c => c.charCodeAt(0));
+const store = { get(){ try { return JSON.parse(localStorage.getItem('mest.keys') || '[]') } catch(e) { return [] } },
+                add(x){ try { const a = store.get(); a.unshift(x); localStorage.setItem('mest.keys', JSON.stringify(a.slice(0,500))) } catch(e) {} } };
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function showHistory(){ $('hist').innerHTML = store.get().map(x => `<tr><td>${esc(x.i)}</td><td>${esc(x.n)}</td><td>${esc(x.m||'any')}</td><td>${esc(x.x||'no end')}</td><td class="k">${esc(x.key)}</td></tr>`).join('') || '<tr><td colspan="5">None yet</td></tr>'; }
+showHistory();
+if ($('priv').value.includes('__PRIVATE')) $('priv').value = '';
+
+$('make').onclick = async () => {
+  const msg = $('msg'); msg.className = 'msg'; msg.textContent = ''; $('out').value = '';
+  const n = $('name').value.trim(), x = $('exp').value, m = $('pc').value.trim().toUpperCase();
+  if (!n) { msg.textContent = 'Type the customer name.'; return; }
+  if (m && !/^[A-Z2-9]{5}-[A-Z2-9]{5}$/.test(m)) { msg.textContent = 'The PC code should look like ABCDE-FGH23.'; return; }
+  let key;
+  try { key = await crypto.subtle.importKey('pkcs8', fromB64($('priv').value), { name: 'Ed25519' }, false, ['sign']); }
+  catch (e) { msg.textContent = 'The private signing key is missing or not valid (' + e.message + '). Use Chrome or Edge.'; return; }
+  const rec = { v: 1, n, i: new Date().toISOString().slice(0,10) };
+  if (m) rec.m = m; if (x) rec.x = x;
+  const body = b64u(new TextEncoder().encode(JSON.stringify(rec)));
+  const sig = await crypto.subtle.sign({ name: 'Ed25519' }, key, new TextEncoder().encode(body));
+  const lic = 'MEST-' + body + '.' + b64u(sig);
+  $('out').value = lic; msg.className = 'msg ok'; msg.textContent = 'Key made for ' + n + '.';
+  store.add(Object.assign({ key: lic }, rec)); showHistory();
+};
+$('copy').onclick = () => { if (!$('out').value) return; navigator.clipboard.writeText($('out').value).then(() => { $('msg').className = 'msg ok'; $('msg').textContent = 'Key copied.'; }); };
+</script>
+</body></html>

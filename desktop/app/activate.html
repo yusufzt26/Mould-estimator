@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Activate Mould Estimator</title>
+<style>
+  :root{--bg:#f4f2ee;--surface:#fff;--ink:#222;--muted:#666;--line:#ddd;--accent:#c4581b;--ok:#2e7d32;--bad:#b3261e}
+  @media (prefers-color-scheme: dark){:root{--bg:#1c1b1a;--surface:#262524;--ink:#eee;--muted:#aaa;--line:#3a3836}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px "Segoe UI",system-ui,sans-serif;padding:24px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:24px;display:flex;flex-direction:column;gap:14px}
+  h1{margin:0;font-size:21px} p{margin:0;color:var(--muted);line-height:1.45}
+  .code{display:flex;align-items:center;gap:10px;font:600 20px Consolas,monospace;letter-spacing:1px}
+  .code button{font:13px "Segoe UI",sans-serif}
+  label{font-weight:600}
+  textarea{width:100%;height:110px;resize:none;font:13px Consolas,monospace;padding:10px;border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit}
+  button{font:inherit;padding:10px 14px;border-radius:8px;border:1px solid var(--line);background:transparent;color:inherit;cursor:pointer}
+  button.go{background:var(--accent);color:#fff;border:0}
+  .msg{min-height:1.4em;color:var(--bad)} .msg.ok{color:var(--ok)}
+</style></head>
+<body><div class="card">
+  <h1>Activate Mould Estimator</h1>
+  <p>Enter the license key you received with this program.</p>
+  <div><label>This PC's code</label>
+    <div class="code"><span id="code"></span><button type="button" id="copy">Copy</button></div>
+    <p style="font-size:13px">If your key is locked to one computer, send this code to your supplier.</p></div>
+  <label for="key">License key</label>
+  <textarea id="key" spellcheck="false" placeholder="MEST-..."></textarea>
+  <button class="go" id="go" type="button">Activate</button>
+  <p class="msg" id="msg"></p>
+</div>
+<script>
+  const q = new URLSearchParams(location.search);
+  document.getElementById('code').textContent = q.get('code') || '';
+  const msg = document.getElementById('msg');
+  if (q.get('reason')) msg.textContent = q.get('reason');
+  document.getElementById('copy').onclick = () => { navigator.clipboard.writeText(q.get('code') || ''); msg.className = 'msg ok'; msg.textContent = 'Code copied.'; };
+  document.getElementById('go').onclick = async () => {
+    msg.className = 'msg'; msg.textContent = 'Checking…';
+    const r = await window.lic.activate(document.getElementById('key').value);
+    if (r.ok) { msg.className = 'msg ok'; msg.textContent = 'Activated for ' + r.name + '. Opening…'; }
+    else msg.textContent = r.why;
+  };
+</script>
+</body></html>
