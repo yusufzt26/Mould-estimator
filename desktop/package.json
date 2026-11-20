@@ -1,0 +1,55 @@
+{
+  "name": "mould-estimator-desktop",
+  "productName": "Mould Estimator",
+  "version": "1.0.0",
+  "description": "Mould Estimator for Windows",
+  "author": "Zoom Technologies",
+  "private": true,
+  "main": "app/main.cjs",
+  "scripts": {
+    "prepare-app": "node build.mjs",
+    "start": "node build.mjs && electron .",
+    "dist": "node build.mjs && electron-builder --win nsis --x64 --publish never"
+  },
+  "devDependencies": {
+    "@fontsource/barlow": "5.2.8",
+    "@fontsource/barlow-semi-condensed": "5.2.7",
+    "@fontsource/ibm-plex-mono": "5.2.7",
+    "electron": "38.8.4",
+    "electron-builder": "26.0.12",
+    "esbuild": "0.25.10",
+    "exceljs": "4.4.0",
+    "jspdf": "2.5.1",
+    "jspdf-autotable": "3.8.2",
+    "pdfjs-dist": "3.11.174",
+    "three": "0.128.0"
+  },
+  "build": {
+    "appId": "com.zoomtech.mouldestimator",
+    "productName": "Mould Estimator",
+    "artifactName": "Mould-Estimator-Setup-${version}.${ext}",
+    "directories": {
+      "output": "release",
+      "buildResources": "build-res"
+    },
+    "files": [
+      "app/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": "nsis",
+      "icon": "build-res/icon.png",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Mould Estimator",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}
